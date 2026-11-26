@@ -1,28 +1,39 @@
 # FinCore
 
-FinCore is a digital wallet and payments simulator for demonstrating how money movement, ledger integrity, reconciliation, and dispute handling work together. It uses synthetic identities and simulated US dollars. Keep the demo on a local or isolated test environment.
+**A digital wallet, double-entry ledger, and payments operations simulator.**
 
-## What you can try
+FinCore shows how a wallet transfer moves from customer request to balanced ledger entries, then gives operations staff the tools to review payment events, investigate disputes, and reverse eligible transactions. The demo uses synthetic identities and simulated US dollars.
 
-| Workspace | Features |
-| --- | --- |
-| Customer | Wallet balances, beneficiaries, transfers, simulated top-ups, CSV statements, and disputes |
-| Operations | Provider event reconciliation, risk alerts, ledger totals, audit history, and dispute review |
-| Finance | Refunds and reversals through compensating ledger entries |
+[Quick start](#quick-start) · [Demo walkthrough](#demo-walkthrough) · [Architecture](#architecture) · [Verification](#verification)
 
-## Architecture
+![FinCore customer dashboard showing a simulated USD balance, wallet actions, and quick access links](docs/dashboard.jpg)
 
-The Next.js dashboard calls an Express API, which owns sessions, wallets, payments, disputes, and the PostgreSQL ledger. A separate Python FastAPI service computes fees, interest, reconciliation differences, and risk signals. Redis is provisioned in Compose for future background jobs.
+## What you can do
 
-Financial amounts are stored as integer cents. PostgreSQL checks each posting for two balanced journal entries. Transfers update balances atomically, request keys protect retries, and signed payment events are deduplicated. A reversal creates a new posting and preserves the original history.
+| Workspace | Capabilities |
+| :--- | :--- |
+| **Customer** | Manage wallets and beneficiaries, send funds, simulate top-ups, export CSV statements, and raise disputes. |
+| **Operations** | Reconcile provider events, review risk signals and audit records, and resolve disputes. |
+| **Finance** | Refund eligible payments and reverse transfers through compensating ledger entries. |
 
-## Run locally
+## Quick start
 
-Install Node.js 20 or later, PostgreSQL 16, and Python 3.12. Create a dedicated PostgreSQL database and give the application user permission to create tables. The API initializes its schema and seeds synthetic accounts when demo mode is enabled.
+### Docker Compose
 
-Run the following from the repository root in three PowerShell terminals. Adjust the database URL for your PostgreSQL instance.
+Copy [`.env.example`](.env.example) to `.env`. Set `POSTGRES_PASSWORD` and use the same password in `COMPOSE_DATABASE_URL`, URL-encoded if needed. Set a local `WEBHOOK_SECRET`, choose a six-digit `SIMULATION_MFA_CODE`, and enable `DEMO_MODE=true`.
 
-**1. Start the API**
+```sh
+docker compose up --build
+```
+
+Open [localhost:3000](http://127.0.0.1:3000/) and choose a demo workspace. The dashboard binds to loopback. The API, database, analytics service, and Redis stay on the Compose network.
+
+<details>
+<summary><strong>Run without Docker on Windows</strong></summary>
+
+Install Node.js 20 or later, PostgreSQL 16, and Python 3.12. Create a dedicated PostgreSQL database and give the application user permission to create tables. In three PowerShell terminals opened at the repository root:
+
+**Terminal 1 · Express API**
 
 ```powershell
 npm ci
@@ -31,7 +42,9 @@ $env:DEMO_MODE = 'true'
 npm run api
 ```
 
-**2. Start analytics**
+The API initializes its schema and seeds demo accounts on startup. Update the connection string to match your database.
+
+**Terminal 2 · FastAPI analytics**
 
 ```powershell
 python -m venv .venv
@@ -39,32 +52,59 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn analytics.main:app --host 127.0.0.1 --port 8000
 ```
 
-**3. Start the dashboard**
+**Terminal 3 · Next.js dashboard**
 
 ```powershell
 npm run dev
 ```
 
-| Service | Default URL |
-| --- | --- |
+| Service | Local endpoint |
+| :--- | :--- |
 | Dashboard | [localhost:3000](http://127.0.0.1:3000/) |
 | API readiness | [localhost:4000/ready](http://127.0.0.1:4000/ready) |
 | Analytics API docs | [localhost:8000/docs](http://127.0.0.1:8000/docs) |
 
-### Docker Compose
-
-Copy `.env.example` to `.env`. Set matching values for `POSTGRES_PASSWORD` and the password in `COMPOSE_DATABASE_URL`. URL-encode the password in the connection string when needed. Set `WEBHOOK_SECRET`, choose a six-digit `SIMULATION_MFA_CODE`, and set `DEMO_MODE=true`. Run `docker compose up --build` and open the dashboard. The web port binds to loopback and the remaining services stay on the Compose network.
+</details>
 
 ## Demo walkthrough
 
-1. Select **Customer demo** and send $25 in simulated funds to Jordan Lee. Confirm that the balance and statement both reflect the transfer. For sensitive actions, the default synthetic password is `FinCoreDemo!2026` and the default confirmation code is `246810`. Use your configured code if you changed it.
-2. Under **Wallets**, simulate a successful and a failed top-up. The successful settlement credits the wallet. The failed payment stays in payment history with no balance change.
-3. Raise a dispute on a posted transaction. Sign out and select **Operations demo** to review the dispute and inspect reconciliation outcomes, audit entries, and risk alerts.
-4. Select **Finance demo** to reverse an eligible transfer using its reference from **Recent postings**.
+1. **Post a transfer.** In **Customer demo**, send $25 to Jordan Lee. Compare the wallet balance and statement before and after the transfer.
+2. **Test settlement.** Under **Wallets**, simulate one successful top-up and one failed top-up. The successful settlement credits the wallet and the failed one stays in payment history.
+3. **Review a dispute.** Raise a dispute on a posted transaction. Switch to **Operations demo** to review it and inspect provider events, risk alerts, and audit history.
+4. **Reverse the transfer.** Copy an eligible transfer reference from **Recent postings**, then use **Finance demo** to post a reversal and inspect the resulting entries.
 
-## Tests and verification
+The default synthetic password is `FinCoreDemo!2026`. Use confirmation code `246810` or the code you set in `SIMULATION_MFA_CODE`.
 
-Use a separate disposable database for API tests because the suite creates synthetic records. Before running Playwright, start the API and dashboard with demo data.
+## Architecture
+
+```mermaid
+flowchart LR
+    Web["Next.js dashboard"] --> API["Express API"]
+    API --> Db["PostgreSQL ledger"]
+    API --> Analytics["FastAPI analytics"]
+    Provider["Simulated payment provider"] -->|Signed events| API
+```
+
+- **Ledger.** Money is stored as integer cents. PostgreSQL requires two balanced journal entries for every posting. Transfers update the affected balances atomically.
+- **Payments.** Request keys protect retries, and signed provider events are deduplicated before settlement. Refunds and reversals preserve the original record and write a compensating posting.
+- **Analytics.** FastAPI uses decimal arithmetic for fees, interest, and reconciliation. Risk signals support staff review of synthetic activity.
+
+## Verification
+
+| Suite | Local result |
+| :--- | :--- |
+| API integration | 6 passed |
+| Python analytics | 4 passed |
+| Browser end-to-end | 3 passed |
+| Next.js production build | Passed |
+| PostgreSQL restore drill | Zero-cent journal net and zero wallet balance mismatches |
+
+See the [verification evidence](docs/evidence.md) for concurrent transfers, duplicate provider events, failed settlement, reversals, and analytics timeout recovery.
+
+<details>
+<summary><strong>Run the tests</strong></summary>
+
+Use a disposable PostgreSQL database for the API suite. Start the API and dashboard with demo data before running Playwright.
 
 ```powershell
 $env:DATABASE_URL = 'postgresql://fincore:YOUR_LOCAL_PASSWORD@127.0.0.1:5432/fincore_test'
@@ -76,25 +116,16 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Set `FINCORE_PREVIEW_URL` if your dashboard uses a different port. Set `FINCORE_BROWSER_CHANNEL=chrome` or `msedge` to use an installed browser.
+Set `FINCORE_PREVIEW_URL` for a different dashboard port or `FINCORE_BROWSER_CHANNEL` to use an installed Chrome or Edge browser.
 
-Local verification recorded 6 API tests, 4 Python tests, and 3 browser tests passing. The restore drill recovered a database with a zero-cent journal net and zero wallet balance mismatches. See the [verification evidence](docs/evidence.md) for the results of concurrent transfers, duplicate payment events, settlement failures, reversals, and analytics timeout recovery.
+</details>
 
-## Project files
+## Documentation
 
-| Path | Purpose |
-| --- | --- |
-| [app/](app/) | Next.js customer and staff dashboards |
-| [api/](api/) | Express API, PostgreSQL schema, and transaction logic |
-| [analytics/](analytics/) | FastAPI calculators, risk rules, and Python tests |
-| [test/](test/) and [e2e/](e2e/) | API integration tests and browser tests |
-| [compose.yaml](compose.yaml) | Local container configuration |
-| [docs/](docs/) | Architecture, API contracts, verification, and recovery |
+| Reference | Contents |
+| :--- | :--- |
+| [Architecture and assessment coverage](docs/architecture.md) | Data model, ledger rules, and assessment status |
+| [OpenAPI specification](docs/openapi.json) · [Postman collection](docs/fincore.postman_collection.json) | API contracts and local requests |
+| [Deployment and recovery](docs/deployment.md) | Release, rollback, backups, and incident procedures |
 
-## Documentation and project status
-
-- [Architecture and assessment coverage](docs/architecture.md)
-- [OpenAPI specification](docs/openapi.json) and [Postman collection](docs/fincore.postman_collection.json)
-- [Deployment and recovery runbook](docs/deployment.md)
-
-The current release is a local capstone demonstration. External provider and notification integrations, ledger holds, background workers, and deployment evidence remain open.
+FinCore is a local capstone demonstration. External provider and notification integrations, ledger holds, background workers, and deployment evidence remain open.
