@@ -1,0 +1,83 @@
+services:
+  postgres:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_DB: fincore
+      POSTGRES_USER: fincore
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - ledger:/var/lib/postgresql/data
+    networks: [private]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U fincore -d fincore"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - queue:/data
+    networks: [private]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  analytics:
+    build:
+      context: .
+      dockerfile: deploy/analytics.Dockerfile
+    networks: [private]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+  api:
+    build:
+      context: .
+      dockerfile: deploy/api.Dockerfile
+    environment:
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:?set COMPOSE_DATABASE_URL}
+      ANALYTICS_URL: http://analytics:8000
+      DEMO_MODE: ${DEMO_MODE:-false}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:?set WEBHOOK_SECRET}
+      SIMULATION_MFA_CODE: ${SIMULATION_MFA_CODE:?set SIMULATION_MFA_CODE}
+    networks: [private]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      analytics:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:4000/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 4s
+      retries: 12
+  web:
+    build:
+      context: .
+      dockerfile: deploy/web.Dockerfile
+      args:
+        NEXT_PUBLIC_DEMO_MODE: ${DEMO_MODE:-false}
+    environment:
+      API_URL: http://api:4000
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks: [edge, private]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+networks:
+  edge: {}
+  private:
+    internal: true
+volumes:
+  ledger:
+  queue:

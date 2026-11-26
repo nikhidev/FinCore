@@ -1,0 +1,15 @@
+node_modules/
+.next/
+.next-local/
+.local-pg/
+.env
+.env.*
+!.env.example
+__pycache__/
+.pytest_cache/
+.venv/
+test-results/
+playwright-report/
+*.tsbuildinfo
+.npm-cache/
+next-env.d.ts

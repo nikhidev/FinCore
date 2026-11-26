@@ -1,0 +1,60 @@
+name: FinCore quality gates
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-bookworm
+        env:
+          POSTGRES_USER: fincore
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: fincore_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fincore -d fincore_test"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://fincore:test-only-password@localhost:5432/fincore_test
+      DEMO_MODE: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Run browser tests
+        run: |
+          node api/server.mjs > api-test.log 2>&1 &
+          api_pid=$!
+          npx next start -H 127.0.0.1 > web-test.log 2>&1 &
+          web_pid=$!
+          trap 'kill "$api_pid" "$web_pid" 2>/dev/null || true' EXIT
+          curl --retry 30 --retry-connrefused --retry-delay 1 --fail http://127.0.0.1:4000/ready
+          curl --retry 30 --retry-connrefused --retry-delay 1 --fail http://127.0.0.1:3000/ --output /dev/null
+          npm run test:e2e
+      - run: python -m pip install -r analytics/requirements.txt
+      - run: python -m pytest analytics
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: fs
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          exit-code: "1"

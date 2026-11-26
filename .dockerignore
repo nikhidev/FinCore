@@ -1,0 +1,10 @@
+node_modules
+.next
+.next-local
+.local-pg
+.npm-cache
+.git
+.env*
+.venv
+__pycache__
+.pytest_cache
